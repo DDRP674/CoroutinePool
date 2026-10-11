@@ -23,6 +23,7 @@ class RobotState:
             out["State"] = self.State
             out["info"] = self.info
             out["STM"] = list(self.STM)
+        out["State_tachie_name"] = self.state_tachie_get()
         out["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return out
             
@@ -64,15 +65,29 @@ class RobotState:
 
     def state_set(self, set_to: float) -> None:
         """将state设置为一个值，带锁"""
-        with self.lock: self.State = set_to
+        with self.lock: 
+            self.State = set_to
+            if self.State > 100: self.State = 100
+            if self.State < -100: self.State = -100
 
     def state_add(self, delta: float) -> None:
         """改变多少state，带锁"""
-        with self.lock: self.State += delta
+        with self.lock: 
+            self.State += delta
+            if self.State > 100: self.State = 100
+            if self.State < -100: self.State = -100
 
     def state_get(self) -> float:
         """获取state，带锁"""
         with self.lock: return self.State
+
+    def state_tachie_get(self) -> str:
+        """获取state对应的tachie的文件名，不带后缀。带锁"""
+        with self.lock: 
+            Visualization_map = settings["Visualization_map"]
+            Visualization_map = dict(sorted(Visualization_map.items(), key=lambda x: x[1]))
+            for name in Visualization_map:
+                if self.State <= Visualization_map[name]: return name
 
 if __name__ == "__main__":
     a = RobotState()

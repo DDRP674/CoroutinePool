@@ -154,7 +154,7 @@ class processor:
                 break
 
     def inbox_input(self, message: dict):
-        """用于从外界输入消息，带锁"""
+        """用于从外界输入消息，用于传入question的answer。带锁"""
         with self.lock: self.inbox.append(message)
 
     def inbox_search(self, id: str) -> list[dict]:

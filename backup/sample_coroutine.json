@@ -1,0 +1,27 @@
+{
+    "id": 0,
+    "priority": 1,
+    "if": {
+
+    },
+    "then": {
+
+    },
+    "else": {
+        
+    }
+}
+
+
+[
+    {
+        "operation": "add",
+        "new_coroutine": {
+            // 这里是你定义的单个coroutine的结构。如果id和已有的相同，则是修改的意思。也就是说，这个add是覆盖的
+        }
+    },
+    {
+        "operation": "delete",
+        "id": "" // 这样就不用输出整个了
+    }
+]

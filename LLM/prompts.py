@@ -14,6 +14,11 @@ Agent 与用户的历史对话：
 其他辅助信息：
 {info}
 
+Agent 当前的 State：
+{State}
+
+State 是提供给前端展示的心情值，取值范围固定为 -100 到 100：-100 表示极度消极，0 表示中性，100 表示极度积极。它会影响前端呈现出的表情、立绘或其他情绪表现。维护协程时，应当把 State 当作连续的心情强度，而不是普通计数器；根据事件影响合理调整（一般以5, 10, 20或更大为单次变化的量），除非情境非常强烈，否则不要轻易跳到两端。
+
 当前时间：
 {time}
 
@@ -53,13 +58,13 @@ priority 为 0 到 100 的整数，数字越大表示越应该优先执行。没
 条件只能从以下类型中选择：
 
 - `semantic_match`：计算用户当前所说的话与一段给定文字的向量相似度，并与阈值比较。格式为 `{{"type": "semantic_match", "text": "用于比较的文字", "operator": "gte", "threshold": 0.75}}`。operator 只能为 `gte` 或 `lt`；通常使用 `gte`。threshold 必须是 0 到 1 的数字，没有特殊理由时使用 0.75。
-- `state_compare`：比较 Agent 当前的 State。格式为 `{{"type": "state_compare", "operator": "gte", "value": 0.5}}`。operator 只能为 `eq`、`not_eq`、`gt`、`gte`、`lt` 或 `lte`，value 必须是数字。判断 State 是否“足够”时通常使用 `gte`。
+- `state_compare`：比较 Agent 当前的 State。格式为 `{{"type": "state_compare", "operator": "gte", "value": 50}}`。operator 只能为 `eq`、`not_eq`、`gt`、`gte`、`lt` 或 `lte`，value 必须是 -100 到 100 之间的数字。判断 State 是否“足够”时通常使用 `gte`。
 - `question`：向大语言模型提出一个只能回答 True 或 False 的判断问题。格式为 `{{"type": "question", "question": "用户现在是否希望结束对话？"}}`。问题必须明确、简短，并且能够只根据当前提供的信息作出判断；不得要求开放式回答。
 
 动作只能从以下类型中选择：
 
 - `speak`：直接说出固定文字。格式为 `{{"type": "speak", "text": "要说的话"}}`。
-- `set_state`：调整 Agent 的 State。格式为 `{{"type": "set_state", "mode": "set", "value": 0.5}}`。mode 只能为 `set` 或 `add`：set 表示将 State 设为 value，add 表示在当前 State 上增加 value；降低 State 时使用负数。
+- `set_state`：调整 Agent 的前端心情 State。格式为 `{{"type": "set_state", "mode": "add", "value": 10}}`。mode 只能为 `set` 或 `add`：set 表示将 State 直接设为 value，add 表示在当前 State 上增加 value，降低心情时使用负数。生成动作时必须结合当前 State 计算执行后的结果，并确保结果仍处于 -100 到 100，任何情况下都不得超出此范围。
 - `append_info`：向 info 添加一条信息，用于提示下一轮前台回复。格式为 `{{"type": "append_info", "content": "要添加的信息"}}`。
 - `frontend_reply`：即使用户此刻没有说话，也主动让前台 LLM 根据当前状态生成一轮回复。格式为 `{{"type": "frontend_reply", "instruction": null}}`。需要约束这一轮回复时，instruction 可以是简短字符串，否则为 null。
 - `exit`：立即结束并从协程池中移除当前协程。格式为 `{{"type": "exit"}}`。它只适合触发一次后就不再需要的临时协程；如果动作列表中包含 exit，它必须是最后一个动作，exit 之后的动作不会执行。
