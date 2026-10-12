@@ -41,6 +41,7 @@ class main:
     def stop(self) -> None:
         self.running = False
         self.VisualHandler.stop()
+        self.TTS.stop()
         obj = self.RS.to_dict()
         obj["CoroutinePool"] = self.CP_manager.coroutine_get()
         with open(self.storage_path, "w+", encoding="utf-8") as f: json.dump(obj, f, indent=3)
@@ -64,7 +65,7 @@ class main:
             while self.CP_processor_output_queue.empty(): 
                 time.sleep(0.5)
                 if not self.running: return
-            message: dict = self.CP_processor_output_queue.get()
+            message: dict = self.CP_processor_output_queue.get()[1]
             message_type = message.get("type", None)
             if message_type == "speak": 
                 content = message.get("content", "")

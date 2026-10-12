@@ -62,7 +62,7 @@ class LLM:
             questions=str(questions)
         )}]
 
-        ret_list = self.req(messagelist)
+        ret_list = self.req(messagelist).get("content", [])
         result = []
         for ret in ret_list:
             if type(ret) == dict:
@@ -91,7 +91,7 @@ class LLM:
             CoroutinePool=str(coroutine_json)
         )}]
 
-        ret_list = self.req(messagelist)
+        ret_list = self.req(messagelist).get("content", [])
         result = []
         for ret in ret_list:
             operation = ret.get("operation", None)

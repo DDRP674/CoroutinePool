@@ -1,4 +1,4 @@
-import os, sys, queue, logging, threading
+import copy, itertools, json, os, sys, queue, logging, threading
 from collections import deque
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from robotstate import RobotState
@@ -34,7 +34,7 @@ class manager:
 
     def coroutine_get(self) -> dict[str: dict]:
         """获取协程池，带锁"""
-        with self.lock: return self.coroutines
+        with self.lock: return copy.deepcopy(self.coroutines)
 
     def coroutine_set(self, coroutine_json: dict[str: dict]):
         """加载协程池，带锁"""
@@ -56,11 +56,19 @@ class processor:
         self.lock = threading.Lock()
         self.embedder = Embedder()
         self.inbox: deque[dict] = deque(maxlen=32)
+        self._condition_observations = {}
+        self._pending_questions = {}
+        self._output_sequence = itertools.count()
 
     def Iter(self, coroutine_dict: dict[str: dict], robotstate_object: RobotState, output_queue: queue.PriorityQueue) -> None:
         """运行时，协程内容被注册进来。把这个函数套进一个循环中吧。\n
         coroutine_dict是manager那里存储的数据结构\n
         这个函数通过queue和robotstate与外界交流，output_queue是优先级队列"""
+        active_ids = set(coroutine_dict)
+        for tracked in (self._condition_observations, self._pending_questions):
+            for removed_id in set(tracked) - active_ids:
+                del tracked[removed_id]
+
         for id, coroutine_json in coroutine_dict.items():
             if_content = coroutine_json.get("if", {})
             then_content: list[dict] = coroutine_json.get("then", [])
@@ -76,21 +84,14 @@ class processor:
                 op = if_content.get("operator", "")
                 target_content = if_content.get("text", "")
                 threshold = if_content.get("threshold", None)
-                content = robotstate_object.STM_get_last_user()
+                revision, content = robotstate_object.STM_get_last_user_event()
+                observation = (self._condition_signature(if_content), revision)
+                if self._condition_observations.get(id) == observation:
+                    continue
+                self._condition_observations[id] = observation
                 if (content and target_content) and (threshold is not None):
                     similarity = self.embedder.embed(content) @ self.embedder.embed(target_content)
-                    if op == "eq": 
-                        if similarity == threshold: go_to_then = True
-                    elif op == "not_eq": 
-                        if similarity != threshold: go_to_then = True
-                    elif op == "gt": 
-                        if similarity > threshold: go_to_then = True
-                    elif op == "gte": 
-                        if similarity >= threshold: go_to_then = True
-                    elif op == "lt": 
-                        if similarity < threshold: go_to_then = True
-                    elif op == "lte": 
-                        if similarity <= threshold: go_to_then = True
+                    go_to_then = self._compare(similarity, op, threshold)
                 
             elif if_type == "state_compare":
                 op = if_content.get("operator", "")
@@ -98,28 +99,37 @@ class processor:
                 if value is None: pass
                 else:
                     try:
-                        if op == "eq": 
-                            if value == robotstate_object.state_get(): go_to_then = True
-                        elif op == "not_eq": 
-                            if value != robotstate_object.state_get(): go_to_then = True
-                        elif op == "gt": 
-                            if value > robotstate_object.state_get(): go_to_then = True
-                        elif op == "gte": 
-                            if value >= robotstate_object.state_get(): go_to_then = True
-                        elif op == "lt": 
-                            if value < robotstate_object.state_get(): go_to_then = True
-                        elif op == "lte": 
-                            if value <= robotstate_object.state_get(): go_to_then = True
+                        go_to_then = self._compare(
+                            robotstate_object.state_get(), op, value
+                        )
                     except TypeError: logging.warning(f"{func_name()}: state修改值类型为{type(value)}")
 
             elif if_type == "question": 
+                revision, _ = robotstate_object.STM_get_last_user_event()
+                observation = (self._condition_signature(if_content), revision)
+                if self._condition_observations.get(id) == observation:
+                    continue
                 answers = self.inbox_search(id)
                 if answers: 
-                    answer = answers[0].get("answer", False)
-                    if type(answer) == bool: go_to_then = answer
-                if not go_to_then: 
+                    answer = answers[0].get("answer", "")
+                    if type(answer) != bool:
+                        continue
+                    go_to_then = answer
+                    answered_observation = self._pending_questions.pop(
+                        id, observation
+                    )
+                    self._condition_observations[id] = answered_observation
+                else:
                     question_content = if_content.get("question", None)
-                    if question_content: output_queue.put((-priority, {"type": "question", "content": question_content, "id": id, "priority": priority}))
+                    if question_content and id not in self._pending_questions:
+                        self._queue_output(output_queue, priority, {
+                            "type": "question",
+                            "content": question_content,
+                            "id": id,
+                            "priority": priority,
+                        })
+                        self._pending_questions[id] = observation
+                    continue
 
 
             # then & else
@@ -127,6 +137,36 @@ class processor:
             else: self.action(else_content, robotstate_object, output_queue, priority, id)
 
     # 辅助函数
+
+    @staticmethod
+    def _condition_signature(condition: dict) -> str:
+        return json.dumps(condition, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _compare(left, operator: str, right) -> bool:
+        if operator == "eq":
+            result = left == right
+        elif operator == "not_eq":
+            result = left != right
+        elif operator == "gt":
+            result = left > right
+        elif operator == "gte":
+            result = left >= right
+        elif operator == "lt":
+            result = left < right
+        elif operator == "lte":
+            result = left <= right
+        else:
+            return False
+        if hasattr(result, "item"):
+            result = result.item()
+        return bool(result)
+
+    def _queue_output(self, output_queue: queue.PriorityQueue, priority, message: dict) -> None:
+        if not isinstance(priority, (float, int)):
+            priority = 0
+        order_key = (-priority, next(self._output_sequence))
+        output_queue.put((order_key, message))
 
     def action(self, action_content_list: list[dict], robotstate_object: RobotState, output_queue: queue.PriorityQueue, priority: int, id: str) -> None:
         for action_content in action_content_list:
@@ -136,21 +176,28 @@ class processor:
                 value = action_content.get("value", None)
                 if isinstance(value, (float, int)):
                     if mode == "add": robotstate_object.state_add(value)
-                    elif mode == "set": robotstate_object.state_get(value)
+                    elif mode == "set": robotstate_object.state_set(value)
             elif action_type == "speak":
-                if not isinstance(priority, (float, int)): priority = 0
                 content = action_content.get("text", "")
-                if content and (type(content) == str): output_queue.put((-priority, {"type": "speak", "content": content.strip()}))
+                if content and (type(content) == str):
+                    self._queue_output(output_queue, priority, {
+                        "type": "speak", "content": content.strip()
+                    })
             elif action_type == "append_info": 
-                newinfo = action_content.get("text", "").strip()
+                newinfo = action_content.get("content", "").strip()
                 if newinfo: robotstate_object.info_append(newinfo)
             elif action_type == "frontend_reply":
-                if not isinstance(priority, (float, int)): priority = 0
                 content = action_content.get("instruction", "")
                 if content is not None:
-                    if content.strip(): output_queue.put((-priority, {"type": "frontend_reply", "content": content}))
+                    if content.strip():
+                        self._queue_output(output_queue, priority, {
+                            "type": "frontend_reply", "content": content
+                        })
             elif action_type == "exit":
-                if id is not None: output_queue.put((-1024, {"type": "exit", "id": id}))
+                if id is not None:
+                    self._queue_output(
+                        output_queue, 1024, {"type": "exit", "id": id}
+                    )
                 break
 
     def inbox_input(self, message: dict):
@@ -164,5 +211,5 @@ class processor:
             for message in self.inbox:
                 if message.get("id", None) == id: 
                     results.append(message)
-                    self.inbox.remove(message)
+            for result in results: self.inbox.remove(result)
         return results

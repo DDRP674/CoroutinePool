@@ -123,6 +123,17 @@ class TTSManagerTests(unittest.TestCase):
         self.assertTrue(self.tts.wait_until_idle(timeout=1))
         self.assertEqual(self.engine.texts, ["Hello!", "你好？", "继续"])
 
+    def test_logs_each_sentence_that_is_sent_to_the_tts_engine(self):
+        with self.assertLogs(level="INFO") as captured:
+            self.send("logged", "[Start]")
+            self.send("logged", "你好。还在继续")
+            self.send("logged", "[End]")
+            self.assertTrue(self.tts.wait_until_idle(timeout=1))
+
+        output = "\n".join(captured.output)
+        self.assertIn("TTS 正在朗读：你好。", output)
+        self.assertIn("TTS 正在朗读：还在继续", output)
+
     def test_one_session_keeps_playback_until_all_its_segments_finish(self):
         self.send("a", "[Start]")
         self.send("a", "A first.")

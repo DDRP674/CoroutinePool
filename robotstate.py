@@ -11,6 +11,7 @@ class RobotState:
 
         with open(settings["Character_path"], "r", encoding="utf-8") as f: self.Character = f.read()
         self.STM = deque(maxlen=settings.get("STM_maxlen", 30))
+        self._user_revision = 0
         
         self.State = 0.0
         self.info = []
@@ -32,6 +33,9 @@ class RobotState:
         # json便乘类，一般加载时使用
         obj = cls()
         obj.STM = deque(d.get("STM", []), maxlen=settings.get("STM_maxlen", 30))
+        obj._user_revision = sum(
+            1 for message in obj.STM if message.get("role") == "user"
+        )
         obj.State = d.get("State", 0.0)
         obj.info = d.get("info", [])
         return obj
@@ -41,7 +45,10 @@ class RobotState:
     def STM_append(self, new_memory: dict) -> None:
         """带锁"""
         with self.lock: 
-            if new_memory.get("content", "").strip(): self.STM.append(new_memory)
+            if new_memory.get("content", "").strip():
+                self.STM.append(new_memory)
+                if new_memory.get("role") == "user":
+                    self._user_revision += 1
 
     def STM_get_last_user(self) -> str|None:
         """获取最新的用户回复，如果没有则返回None。带锁"""
@@ -50,6 +57,16 @@ class RobotState:
             for i in range(size):
                 if self.STM[size-i-1].get("role", "") == "user": return self.STM[size-i-1].get("content", None)
         return None
+
+    def STM_get_last_user_event(self) -> tuple[int, str|None]:
+        """返回最新用户消息的版本号和内容；相同文本的两次输入版本号不同。"""
+        with self.lock:
+            size = len(self.STM)
+            for i in range(size):
+                message = self.STM[size-i-1]
+                if message.get("role", "") == "user":
+                    return self._user_revision, message.get("content", None)
+            return self._user_revision, None
 
     # 信息通道
 

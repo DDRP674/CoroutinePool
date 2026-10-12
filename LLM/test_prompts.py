@@ -14,7 +14,7 @@ class CoroutinePromptTests(unittest.TestCase):
 
         def capture(messages):
             captured_messages.extend(messages)
-            return []
+            return {"role": "assistant", "content": []}
 
         llm.req = capture
 

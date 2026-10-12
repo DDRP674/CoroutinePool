@@ -292,6 +292,7 @@ class manager:
                 try:
                     if self.engine is None:
                         self.engine = self._engine_factory()
+                    logging.info("TTS: %s", segment)
                     yield from self.engine.stream(segment)
                 except Exception as exc:
                     self.last_error = exc
